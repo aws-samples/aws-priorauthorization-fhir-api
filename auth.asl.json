@@ -1,0 +1,84 @@
+{
+  "Comment": "Function to fetch member360 data",
+  "StartAt": "Patient360View",
+  "States": {
+       "Patient360View": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "HeartbeatSeconds": 600,
+      "Parameters": {
+        "FunctionName": "${Patient360viewArn}",
+        "Payload.$": "$"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Choice",
+      "ResultPath": "$.bundle"
+    },
+    "Choice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.bundle.Payload.entry",
+              "IsPresent": true
+            }
+          ],
+          "Next": "Pass"
+        }
+      ],
+      "Default": "Fail"
+    },
+    "Pass": {
+      "Type": "Pass",
+      "Next": "saveBundletoLake",
+      "Parameters": {
+        "resourceType.$": "$.resourceType",
+        "id.$": "$.id",
+        "meta.$": "$.meta",
+        "identifier.$": "$.identifier",
+        "type.$": "$.type",
+        "timestamp.$": "$.timestamp",
+        "entry.$": "$.entry"
+      }
+    },
+    "saveBundletoLake": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "Payload.$": "$",
+        "FunctionName": "${SaveAuthinHealthLakeArn}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "End": true
+    },
+    "Fail": {
+      "Type": "Fail"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+pytest
+pytest-mock
+boto3
+requests==2.28.1
+requests_auth_aws_sigv4==0.7

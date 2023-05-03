@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+ 
+Parameters:
+  CognitoUserPoolName:
+    Type: String
+    Description: Name of Cognitouserpool that will be used to store users and generate tokens for authentication and authorization  
+     
+Resources:
+
+  SAMLogs:  
+    Type: AWS::Logs::LogGroup
+
+  FHIRCognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Ref CognitoUserPoolName
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+      UsernameAttributes:
+        - email
+      Schema:
+        - AttributeDataType: String
+          Name: email
+          Required: false
+  
+  MyCognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref FHIRCognitoUserPool
+      ClientName: !Ref AuthApi
+      GenerateSecret: false
+      ExplicitAuthFlows:
+       - ALLOW_USER_PASSWORD_AUTH
+       - ALLOW_REFRESH_TOKEN_AUTH
+  HealthDatastore:
+    Type: AWS::HealthLake::FHIRDatastore
+    Properties: 
+     DatastoreName: "HealthDatastore"
+     DatastoreTypeVersion: "R4"
+     PreloadDataConfig: 
+          PreloadDataType: "SYNTHEA"
+ 
+  AuthApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      FailOnWarnings: True
+      StageName: Prod
+      Cors: "'*'"
+      Auth:
+        DefaultAuthorizer: MyCognitoAuthorizer
+        Authorizers:
+          MyCognitoAuthorizer:
+            UserPoolArn: !GetAtt FHIRCognitoUserPool.Arn
+  AuthStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: EXPRESS
+      DefinitionUri: auth.asl.json
+      DefinitionSubstitutions:
+        Patient360viewArn: !GetAtt Patient360view.Arn
+        SaveAuthinHealthLakeArn: !GetAtt SaveAuthinHealthLake.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt SAMLogs.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref Patient360view
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SaveAuthinHealthLake
+        - CloudWatchLogsFullAccess
+ 
+
+  Patient360view:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: patient360ViewFunction.lambda_handler
+      Runtime: python3.7
+      CodeUri: ./patient360view
+      Description: ''
+      MemorySize: 128
+      Timeout: 3
+      Policies: 
+        - AmazonHealthLakeFullAccess
+      Environment:
+        Variables:
+          SERVICE: 'healthlake'
+          DATASTOREID: !GetAtt HealthDatastore.DatastoreId
+  SaveAuthinHealthLake:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: saveAuth.lambda_handler
+      Runtime: python3.7
+      CodeUri: ./saveAuthtoHealthLake
+      Description: ''
+      MemorySize: 128
+      Timeout: 3
+      Policies: 
+        - AmazonHealthLakeFullAccess
+      Environment:
+        Variables:
+          SERVICE: 'healthlake'
+          DATASTOREID: !GetAtt HealthDatastore.DatastoreId
+        
+  ValidatePriorAuth:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: 'com.amazonaws.auth.LambdaHandler::handleRequest'
+      Runtime: java11
+      CodeUri: ./validatePriorAuthFunction
+      Description: ''
+      MemorySize: 4000
+      Timeout: 300
+      Policies: 
+        - AWSStepFunctionsFullAccess
+      Environment:
+        Variables:
+          COGNITO_ENABLED: 'true'
+          VALIDATE_FHIR_RESOURCE: 'true'
+          AUTH_STATE_MACHINE_ARN: !GetAtt AuthStateMachine.Arn
+      Events:
+         AuthApi:
+           Type: Api
+           Properties:
+             Path: '/Bundle'
+             Method: post
+             RestApiId:
+              Ref: AuthApi
+  # HttpApiRole:
+  #   Type: 'AWS::IAM::Role'
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: 2012-10-17
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service:
+  #             - apigateway.amazonaws.com
+  #           Action:
+  #             - 'sts:AssumeRole'
+  #     Policies:
+  #     - PolicyName: Allow
+  #       PolicyDocument:
+  #         Version: 2012-10-17
+  #         Statement:
+  #           - Effect: Allow
+  #             Action: "states:StartSyncExecution"
+  #             Resource: !Ref AuthStateMachine
+
+Outputs:
+  AuthApi:
+    Description: "API Gateway endpoint URL for Prod stage for Order function"
+    Value: !Sub "https://${AuthApi}.execute-api.${AWS::Region}.amazonaws.com/bundle"
