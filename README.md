@@ -4,7 +4,7 @@
 A serverless workflow to accept FHIR bundle prior authorization request and validates fhir resource and then executes prior authorization rules input payload as well as data received from healthlake and then saves prior authorization status into healthlake.
 ## Design
 
-![ ](docs/images/PriorAuthFHIRValidation.jpg)
+![ ](docs/images/PrirAuthFHIRValidation.jpg)
 
 ## Installation
  If you do not have maven or java , please ensure that you are under root project folder and execute following command.
